@@ -1,12 +1,12 @@
-import json
-import requests
+import os
 import streamlit as st
+from groq import Groq
 from duckduckgo_search import DDGS
 
 # ----------------------------------------------------
-# 🔑 EMBEDDED AQ KEY
+# 🔑 SECURE KEY RETRIEVAL (Safe for Public GitHub)
 # ----------------------------------------------------
-AUTH_KEY = "AQ.Ab8RN6JgbeeoEr6J-Rdy_PE24hl_exdseT_L4V1AaGh8W0wATg"
+AUTH_KEY = st.secrets.get("GROQ_API_KEY", "")
 
 # ----------------------------------------------------
 # 🎨 COLORFUL, MODERN UI CONFIGURATION
@@ -20,7 +20,7 @@ st.set_page_config(
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-
+    
     * {
         font-family: 'Plus Jakarta Sans', sans-serif;
     }
@@ -92,11 +92,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
 # ----------------------------------------------------
-# ⚡ SEARCH ENGINE
+# ⚡ SEARCH ENGINE (Free DuckDuckGo)
 # ----------------------------------------------------
-def search_company_fast(query: str, max_results: int = 4) -> str:
+def search_company_fast(query: str, max_results: int = 5) -> str:
     results = []
     try:
         with DDGS(timeout=5) as ddgs:
@@ -106,64 +105,6 @@ def search_company_fast(query: str, max_results: int = 4) -> str:
     except Exception:
         pass
     return "\n---\n".join(results) if results else "No external search snippets available."
-
-
-# ----------------------------------------------------
-# 🌐 DYNAMIC API CALL (Auto-detects active models)
-# ----------------------------------------------------
-def get_working_headers(token: str):
-    """Returns headers that work with the key."""
-    return {
-        "Content-Type": "application/json",
-        "x-goog-api-key": token
-    }
-
-
-def call_gemini_api(prompt_text: str, token: str) -> str:
-    # Modern active models suggested by the Google API error response
-    models_to_try = [
-        "gemini-3.1-pro-preview",
-        "gemini-3.8-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.5-flash"
-    ]
-
-    payload = {
-        "contents": [{
-            "parts": [{"text": prompt_text}]
-        }]
-    }
-
-    headers = get_working_headers(token)
-    last_error = ""
-
-    for model_name in models_to_try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
-
-            # If 401, retry with Bearer token header
-            if resp.status_code == 401:
-                alt_headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {token}"
-                }
-                resp = requests.post(url, headers=alt_headers, json=payload, timeout=30)
-
-            if resp.status_code == 200:
-                data = resp.json()
-                return data["candidates"][0]["content"]["parts"][0]["text"]
-            else:
-                last_error = f"{model_name} (Status {resp.status_code}): {resp.text}"
-                # If 503 (busy) or 404 (wrong version), smoothly continue to next model
-                continue
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    raise Exception(last_error)
-
 
 # ----------------------------------------------------
 # 📥 USER INPUT
@@ -178,22 +119,30 @@ with col_search:
     )
 
 with col_btn:
-    analyze_click = st.button("🚀 Analyze Now")
+    analyze_click = st.button("🚀 Le Le Profile")
 
 # ----------------------------------------------------
-# ⚙️ AGENT PIPELINE
+# ⚙️ AGENT PIPELINE (GROQ LLAMA-3.3-70B)
 # ----------------------------------------------------
 if analyze_click:
     if not target_company.strip():
         st.warning("⚠️ Please enter a company name first.")
+    elif not AUTH_KEY:
+        st.error("⚠️ GROQ_API_KEY is missing! Add it in your Streamlit Cloud dashboard under App Settings -> Secrets.")
     else:
-        with st.spinner("⚡ Fetching live corporate records & analyzing..."):
-            search_query = f"{target_company} CEO MD founder products revenue GDP"
-            search_data = search_company_fast(search_query, max_results=4)
+        with st.spinner("⚡ Fetching live corporate records & analyzing via Groq..."):
+            search_query = f"{target_company} CEO MD founder products revenue GDP role"
+            search_data = search_company_fast(search_query, max_results=5)
+
+            system_instruction = """
+            You are a senior corporate intelligence analyst and macro-economist.
+            Generate a concise, beautifully structured intelligence dossier for the requested company.
+            Combine the provided online search context with your knowledge base.
+            Strictly follow the Markdown format requested by the user.
+            """
 
             prompt = f"""
-            You are a corporate intelligence analyst. Create a concise, structured intelligence dossier for '{target_company}'.
-            Use the web context below, combined with your knowledge.
+            Generate a full corporate intelligence dossier for '{target_company}'.
 
             WEB SEARCH CONTEXT:
             {search_data}
@@ -235,10 +184,28 @@ if analyze_click:
             * **Supply Chain**: Critical vendor ecosystem reliance.
             """
 
+            st.markdown('<div class="dossier-card">', unsafe_allow_html=True)
+            placeholder = st.empty()
+            full_text = ""
+
             try:
-                result_text = call_gemini_api(prompt, AUTH_KEY)
-                st.markdown('<div class="dossier-card">', unsafe_allow_html=True)
-                st.markdown(result_text)
-                st.markdown('</div>', unsafe_allow_html=True)
+                client = Groq(api_key=AUTH_KEY)
+                stream = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_instruction},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    stream=True
+                )
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content or ""
+                    full_text += content
+                    placeholder.markdown(full_text + " ▌")
+                
+                placeholder.markdown(full_text)
             except Exception as e:
-                st.error(f"⚠️ API Response: {e}")
+                st.error(f"⚠️ Groq Error: {e}")
+
+            st.markdown('</div>', unsafe_allow_html=True)
