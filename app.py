@@ -4,7 +4,7 @@ from groq import Groq
 from duckduckgo_search import DDGS
 
 # ----------------------------------------------------
-# 🔑 SECURE KEY RETRIEVAL (Safe for Public GitHub)
+# 🔑 SECURE KEY RETRIEVAL (Reads from Streamlit Secrets)
 # ----------------------------------------------------
 AUTH_KEY = st.secrets.get("GROQ_API_KEY", "")
 
@@ -119,16 +119,16 @@ with col_search:
     )
 
 with col_btn:
-    analyze_click = st.button("🚀 Le Le Profile")
+    analyze_click = st.button("🚀 Analyze Now")
 
 # ----------------------------------------------------
-# ⚙️ AGENT PIPELINE (GROQ LLAMA-3.3-70B)
+# ⚙️ AGENT PIPELINE (GROQ WITH MULTI-MODEL FALLBACK)
 # ----------------------------------------------------
 if analyze_click:
     if not target_company.strip():
         st.warning("⚠️ Please enter a company name first.")
     elif not AUTH_KEY:
-        st.error("⚠️ GROQ_API_KEY is missing! Add it in your Streamlit Cloud dashboard under App Settings -> Secrets.")
+        st.error("⚠️ GROQ_API_KEY is missing! Go to your Streamlit Cloud settings -> Secrets, and add: GROQ_API_KEY = \"gsk_...\"")
     else:
         with st.spinner("⚡ Fetching live corporate records & analyzing via Groq..."):
             search_query = f"{target_company} CEO MD founder products revenue GDP role"
@@ -184,28 +184,48 @@ if analyze_click:
             * **Supply Chain**: Critical vendor ecosystem reliance.
             """
 
+            models_to_try = [
+                "llama-3.1-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "llama3-70b-8192",
+                "llama3-8b-8192"
+            ]
+
             st.markdown('<div class="dossier-card">', unsafe_allow_html=True)
             placeholder = st.empty()
             full_text = ""
+            success = False
+            last_err = ""
 
             try:
                 client = Groq(api_key=AUTH_KEY)
-                stream = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": system_instruction},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.3,
-                    stream=True
-                )
-                for chunk in stream:
-                    content = chunk.choices[0].delta.content or ""
-                    full_text += content
-                    placeholder.markdown(full_text + " ▌")
-                
-                placeholder.markdown(full_text)
-            except Exception as e:
-                st.error(f"⚠️ Groq Error: {e}")
+                for model_id in models_to_try:
+                    try:
+                        stream = client.chat.completions.create(
+                            model=model_id,
+                            messages=[
+                                {"role": "system", "content": system_instruction},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.3,
+                            stream=True
+                        )
+                        for chunk in stream:
+                            content = chunk.choices[0].delta.content or ""
+                            full_text += content
+                            placeholder.markdown(full_text + " ▌")
+                        
+                        placeholder.markdown(full_text)
+                        success = True
+                        break
+                    except Exception as e:
+                        last_err = str(e)
+                        continue
+
+                if not success:
+                    st.error(f"⚠️ Groq Error: {last_err}")
+            except Exception as client_err:
+                st.error(f"⚠️ Failed to connect to Groq client: {client_err}")
 
             st.markdown('</div>', unsafe_allow_html=True)
