@@ -1,11 +1,12 @@
+import json
+import requests
 import streamlit as st
-from google import genai
 from duckduckgo_search import DDGS
 
 # ----------------------------------------------------
-# 🔑 PERMANENT API KEY EMBEDDED
+# 🔑 EMBEDDED AQ KEY
 # ----------------------------------------------------
-API_KEY = "AQ.Ab8RN6LCnqaJWLptZdnfuIz4pxDIaXPxea69eTgfuP46J_Fpag"
+AUTH_KEY = "AQ.Ab8RN6JgbeeoEr6J-Rdy_PE24hl_exdseT_L4V1AaGh8W0wATg"
 
 # ----------------------------------------------------
 # 🎨 COLORFUL, MODERN UI CONFIGURATION
@@ -87,13 +88,13 @@ st.markdown("""
 st.markdown("""
 <div class="hero-card">
     <div class="hero-title">⚡ Corporate Vision & Intelligence</div>
-    <div class="hero-desc">Fast autonomous corporate research: leadership, offerings, roadmap, and macroeconomic footprint.</div>
+    <div class="hero-desc">Autonomous research engine for live company leadership, products, future bets, and GDP economic footprint.</div>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ----------------------------------------------------
-# ⚡ HIGH-SPEED SEARCH (Hard timeout to prevent hanging)
+# ⚡ SEARCH ENGINE
 # ----------------------------------------------------
 def search_company_fast(query: str, max_results: int = 4) -> str:
     results = []
@@ -108,7 +109,64 @@ def search_company_fast(query: str, max_results: int = 4) -> str:
 
 
 # ----------------------------------------------------
-# 📥 INPUT SECTION
+# 🌐 DYNAMIC API CALL (Auto-detects active models)
+# ----------------------------------------------------
+def get_working_headers(token: str):
+    """Returns headers that work with the key."""
+    return {
+        "Content-Type": "application/json",
+        "x-goog-api-key": token
+    }
+
+
+def call_gemini_api(prompt_text: str, token: str) -> str:
+    # Modern active models suggested by the Google API error response
+    models_to_try = [
+        "gemini-3.1-pro-preview",
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash"
+    ]
+
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt_text}]
+        }]
+    }
+
+    headers = get_working_headers(token)
+    last_error = ""
+
+    for model_name in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+
+            # If 401, retry with Bearer token header
+            if resp.status_code == 401:
+                alt_headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {token}"
+                }
+                resp = requests.post(url, headers=alt_headers, json=payload, timeout=30)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                last_error = f"{model_name} (Status {resp.status_code}): {resp.text}"
+                # If 503 (busy) or 404 (wrong version), smoothly continue to next model
+                continue
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+    raise Exception(last_error)
+
+
+# ----------------------------------------------------
+# 📥 USER INPUT
 # ----------------------------------------------------
 col_search, col_btn = st.columns([4, 1.2])
 
@@ -123,98 +181,64 @@ with col_btn:
     analyze_click = st.button("🚀 Analyze Now")
 
 # ----------------------------------------------------
-# ⚙️ MULTI-TIER ROBUST AGENT
+# ⚙️ AGENT PIPELINE
 # ----------------------------------------------------
 if analyze_click:
     if not target_company.strip():
         st.warning("⚠️ Please enter a company name first.")
     else:
-        with st.spinner("⚡ Fetching fresh corporate data..."):
+        with st.spinner("⚡ Fetching live corporate records & analyzing..."):
             search_query = f"{target_company} CEO MD founder products revenue GDP"
             search_data = search_company_fast(search_query, max_results=4)
 
-        client = genai.Client(api_key=API_KEY)
+            prompt = f"""
+            You are a corporate intelligence analyst. Create a concise, structured intelligence dossier for '{target_company}'.
+            Use the web context below, combined with your knowledge.
 
-        prompt = f"""
-        You are a corporate intelligence analyst. Create a concise, structured intelligence dossier for '{target_company}'.
-        Use the web context below, combined with your knowledge.
+            WEB SEARCH CONTEXT:
+            {search_data}
 
-        WEB SEARCH CONTEXT:
-        {search_data}
+            Strictly format as:
+            # 🏢 {target_company} — Corporate Intelligence Dossier
+            ---
+            ### 🏛️ Executive Snapshot
+            | Attribute | Details |
+            | :--- | :--- |
+            | **Official Name** | (Official registered name) |
+            | **Founded** | (Year or date) |
+            | **Founders** | (Names) |
+            | **Headquarters** | (City, Country) |
+            | **Key Leadership** | **CEO:** [Name] <br> **MD / Chairperson:** [Name] |
+            | **Listing** | [Public (Exchange: TICKER) or Private] |
 
-        Strictly format as:
-        # 🏢 {target_company} — Corporate Intelligence Dossier
-        ---
-        ### 🏛️ Executive Snapshot
-        | Attribute | Details |
-        | :--- | :--- |
-        | **Official Name** | (Official registered name) |
-        | **Founded** | (Year or date) |
-        | **Founders** | (Names) |
-        | **Headquarters** | (City, Country) |
-        | **Key Leadership** | **CEO:** [Name] <br> **MD / Chairperson:** [Name] |
-        | **Listing** | [Public (Exchange: TICKER) or Private] |
+            ---
+            ### 🧭 About the Company & Mission
+            > [2-3 sentences on market positioning, identity, and footprint]
 
-        ---
-        ### 🧭 About the Company & Mission
-        > [2-3 sentences on market positioning, identity, and footprint]
+            ---
+            ### 📦 Core Offerings & Products
+            * **[Product Segment 1]**: Brief description.
+            * **[Product Segment 2]**: Brief description.
+            * **[Product Segment 3]**: Brief description.
 
-        ---
-        ### 📦 Core Offerings & Products
-        * **[Product Segment 1]**: Brief description.
-        * **[Product Segment 2]**: Brief description.
-        * **[Product Segment 3]**: Brief description.
+            ---
+            ### 🎯 Strategic Focus & Future Bets
+            * **Core Advantage**: Competitive moat.
+            * **R&D & Tech Horizon**: Future investments (e.g., AI, green transition, automation).
+            * **Expansion Focus**: Priority markets.
 
-        ---
-        ### 🎯 Strategic Focus & Future Bets
-        * **Core Advantage**: Competitive moat.
-        * **R&D & Tech Horizon**: Future investments (e.g., AI, green transition, automation).
-        * **Expansion Focus**: Priority markets.
+            ---
+            ### 🌍 Role in GDP & Macroeconomic Footprint
+            * **Revenue & Valuation**: Latest figures.
+            * **Workforce**: Direct headcount & indirect job ecosystem.
+            * **GDP Impact**: Contribution to domestic/global GDP, tax revenues, and export share.
+            * **Supply Chain**: Critical vendor ecosystem reliance.
+            """
 
-        ---
-        ### 🌍 Role in GDP & Macroeconomic Footprint
-        * **Revenue & Valuation**: Latest figures.
-        * **Workforce**: Direct headcount & indirect job ecosystem.
-        * **GDP Impact**: Contribution to domestic/global GDP, tax revenues, and export share.
-        * **Supply Chain**: Critical vendor ecosystem reliance.
-        """
-
-        # Reliable models ordered by speed and high availability
-        reliable_models = [
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-8b",
-            "gemini-3.8-flash"
-        ]
-
-        st.markdown('<div class="dossier-card">', unsafe_allow_html=True)
-        placeholder = st.empty()
-        full_text = ""
-
-        success = False
-        captured_errors = []
-
-        for model_id in reliable_models:
             try:
-                response_stream = client.models.generate_content_stream(
-                    model=model_id,
-                    contents=prompt
-                )
-                for chunk in response_stream:
-                    if chunk.text:
-                        full_text += chunk.text
-                        placeholder.markdown(full_text + " ▌")
-                placeholder.markdown(full_text)
-                success = True
-                break
+                result_text = call_gemini_api(prompt, AUTH_KEY)
+                st.markdown('<div class="dossier-card">', unsafe_allow_html=True)
+                st.markdown(result_text)
+                st.markdown('</div>', unsafe_allow_html=True)
             except Exception as e:
-                captured_errors.append(f"**{model_id}**: {str(e)}")
-                continue
-
-        if not success:
-            st.error("⚠️ All model endpoints returned an error:")
-            for err in captured_errors:
-                st.write(err)
-
-        st.markdown('</div>', unsafe_allow_html=True)
+                st.error(f"⚠️ API Response: {e}")
