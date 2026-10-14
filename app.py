@@ -107,6 +107,25 @@ def search_company_fast(query: str, max_results: int = 5) -> str:
     return "\n---\n".join(results) if results else "No external search snippets available."
 
 # ----------------------------------------------------
+# 🔍 LIVE GROQ MODEL DISCOVERY
+# ----------------------------------------------------
+def get_available_groq_models(client: Groq):
+    """Dynamically queries Groq for active, non-deprecated chat models."""
+    try:
+        model_list = client.models.list()
+        # Filter out whisper (audio), guard, or embedding models
+        chat_models = [
+            m.id for m in model_list.data 
+            if not any(skip in m.id for skip in ["whisper", "guard", "embed", "safeguard", "vision"])
+        ]
+        if chat_models:
+            return chat_models
+    except Exception:
+        pass
+    # Fallback to standard active defaults if listing fails
+    return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
+
+# ----------------------------------------------------
 # 📥 USER INPUT
 # ----------------------------------------------------
 col_search, col_btn = st.columns([4, 1.2])
@@ -122,7 +141,7 @@ with col_btn:
     analyze_click = st.button("🚀 Analyze Now")
 
 # ----------------------------------------------------
-# ⚙️ AGENT PIPELINE (GROQ WITH MULTI-MODEL FALLBACK)
+# ⚙️ AGENT PIPELINE
 # ----------------------------------------------------
 if analyze_click:
     if not target_company.strip():
@@ -184,14 +203,6 @@ if analyze_click:
             * **Supply Chain**: Critical vendor ecosystem reliance.
             """
 
-            models_to_try = [
-                "llama-3.1-70b-versatile",
-                "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768",
-                "llama3-70b-8192",
-                "llama3-8b-8192"
-            ]
-
             st.markdown('<div class="dossier-card">', unsafe_allow_html=True)
             placeholder = st.empty()
             full_text = ""
@@ -200,7 +211,9 @@ if analyze_click:
 
             try:
                 client = Groq(api_key=AUTH_KEY)
-                for model_id in models_to_try:
+                active_models = get_available_groq_models(client)
+
+                for model_id in active_models:
                     try:
                         stream = client.chat.completions.create(
                             model=model_id,
@@ -226,6 +239,6 @@ if analyze_click:
                 if not success:
                     st.error(f"⚠️ Groq Error: {last_err}")
             except Exception as client_err:
-                st.error(f"⚠️ Failed to connect to Groq client: {client_err}")
+                st.error(f"⚠️ Connection Error: {client_err}")
 
             st.markdown('</div>', unsafe_allow_html=True)
